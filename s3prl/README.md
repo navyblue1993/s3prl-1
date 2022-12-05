@@ -2,8 +2,8 @@
 
 python3 run_downstream.py \
 -m train \
--n <exp name> \
+-n exp_name \
 -u wavlm_large \
 -d emotion \
--c <config file> \
+-c config_file \
 -f -l -1
