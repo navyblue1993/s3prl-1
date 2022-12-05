@@ -15,6 +15,7 @@ from s3prl.downstream.runner import Runner
 from s3prl.utility.helper import backup, get_time_tag, hack_isinstance, is_leader_process, override
 
 from huggingface_hub import HfApi, HfFolder
+from pdb import set_trace
 
 def get_downstream_args():
     parser = argparse.ArgumentParser()
@@ -96,6 +97,7 @@ def get_downstream_args():
             if len(ckpt_pths) > 0:
                 args.past_exp = args.expdir
 
+    # set_trace()
     if args.past_exp:
         # determine checkpoint path
         if os.path.isdir(args.past_exp):
@@ -132,6 +134,7 @@ def get_downstream_args():
 
     else:
         print('[Runner] - Start a new experiment')
+        #set_trace()
         os.makedirs(args.expdir, exist_ok=True)
 
         if args.config is None:

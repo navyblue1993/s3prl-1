@@ -10,6 +10,7 @@ def get_downstream_model(input_dim, output_dim, config):
     return model
 
 
+
 class FrameLevel(nn.Module):
     def __init__(self, input_dim, output_dim, hiddens=None, activation='ReLU', **kwargs):
         super().__init__()
@@ -77,6 +78,25 @@ class MeanPooling(nn.Module):
         return torch.stack(agg_vec_list), torch.ones(len(feature_BxTxH)).long()
 
 
+class StdMeanPooling(nn.Module):
+
+    def __init__(self, **kwargs):
+        super(MeanPooling, self).__init__()
+
+    def forward(self, feature_BxTxH, features_len, **kwargs):
+        ''' 
+        Arguments
+            feature_BxTxH - [BxTxH]   Acoustic feature with shape 
+            features_len  - [B] of feature length
+        '''
+        agg_vec_list = []
+        for i in range(len(feature_BxTxH)):
+            agg_vec = torch.std_mean(feature_BxTxH[i][:features_len[i]], dim=0)
+            agg_vec_list.append(agg_vec)
+
+        return torch.stack(agg_vec_list), torch.ones(len(feature_BxTxH)).long()
+
+
 class AttentivePooling(nn.Module):
     ''' Attentive Pooling module incoporate attention mask'''
 
@@ -125,3 +145,170 @@ class AttentivePoolingModule(nn.Module):
         utter_rep = torch.sum(batch_rep * att_w, dim=1)
 
         return utter_rep, att_w
+
+class CorrelationAttentivePooling(nn.Module):
+    '''
+    Correlation type of pooling: https://arxiv.org/abs/2104.02571
+    Correlation attentive pooling: https://arxiv.org/abs/2211.01756
+    '''
+
+    def __init__(self, p_drop=0.25, **kwargs):
+       	super(CorrelationAttentivePooling, self).__init__()
+       	self.nheads = 4
+       	input_dim = 256
+       	self.sap_layer = AttentivePoolingModule(input_dim=input_dim) if self.nheads==1 \
+                                                           else AttentiveLSEPoolingModule(input_dim=input_dim, nheads=self.nheads)
+        self.drop_f = p_drop != 0
+        print(f'\nSelected channel wise dropout rate of: {p_drop}\n')
+        print(f'\nSelected number of attention heads: {self.nheads}\n')
+        if self.drop_f:
+            self.dropout = nn.Dropout2d(p=p_drop)
+
+    def forward(self, feature_BxTxH, features_len, **kwargs):
+        '''
+       	Arguments
+            feature_BxTxH - [BxTxH]   Acoustic feature with shape
+            features_len  - [B] of feature length                                                                                        \
+       	'''
+
+        if self.drop_f:
+            feature_BxHxT = torch.permute(feature_BxTxH, (0,2,1)) # [BxHxT]
+            feature_BxHxT = torch.unsqueeze(feature_BxHxT, dim=-1) # [BxHxTx1]
+            feature_BxHxT = self.dropout(feature_BxHxT)
+            feature_BxHxT = torch.squeeze(feature_BxHxT, dim=-1) # [BxHxT]
+            feature_BxTxH = torch.permute(feature_BxHxT, (0,2,1)) # [BxTxH]
+        
+        device = feature_BxTxH.device
+        len_masks = torch.lt(torch.arange(features_len.max()).unsqueeze(0).to(device), features_len.unsqueeze(1))
+        if self.nheads == 1:
+            att_logits_before_lse = []
+            sap_vec, att_w = self.sap_layer(feature_BxTxH, len_masks)
+        else:
+            sap_vec, att_w, att_logits_before_lse = self.sap_layer(feature_BxTxH, len_masks)
+
+        dshift = 1  # the diagonal to consider (0:includes diag, 1:from 1 over diag)
+
+        agg_vec_list = []
+        for i in range(len(feature_BxTxH)):
+            d = feature_BxTxH.shape[-1]
+            x = feature_BxTxH[i] - sap_vec[i]
+            corr = torch.einsum('jk,jl->kl', att_w[i]*x, x) # (H, H)
+            if dshift == 1:
+                s = torch.sqrt(torch.diagonal(corr)+1e-9)
+                corr = torch.div(corr,torch.outer(s, s))
+            corr = corr[torch.triu_indices(d, d, offset=dshift).unbind()]
+            agg_vec_list.append(corr)
+
+        return torch.stack(agg_vec_list), torch.ones(len(feature_BxTxH)).long() #, att_w, att_logits_before_lse # (B,feat_dim), (B,)
+
+
+class AttentiveLSEPoolingModule(nn.Module):
+    """
+    Implementation of LSE Attentive Pooling
+    """
+    def __init__(self, input_dim, nheads, activation='ReLU', **kwargs):
+        super(AttentiveLSEPoolingModule, self).__init__()
+        self.W_a = nn.Linear(input_dim, input_dim)
+        self.W = nn.Linear(input_dim, nheads)
+        self.act_fn = getattr(nn, activation)()
+        self.softmax = nn.functional.softmax
+        
+        
+    def forward(self, batch_rep, att_mask):
+       	"""
+       	input:                                                                                                                                                $
+       	batch_rep : size (B, T, H), B: batch size, T: sequence length, H: Hidden dimension                                                                    $
+       	attention_weight:                                                                                                                                     $
+       	att_w : size (B, T, 1)
+       	return:                                                                                                                                               $
+       	utter_rep: size (B, H)
+       	"""
+        
+        att_logits = self.W(self.act_fn(self.W_a(batch_rep))).squeeze(-1)
+        att_logits_before_lse = att_logits
+        
+class CorrelationAttentivePooling(nn.Module):
+    '''
+    Correlation type of pooling: https://arxiv.org/abs/2104.02571
+    Correlation attentive pooling: https://arxiv.org/abs/2211.01756
+    '''
+
+    def __init__(self, p_drop=0.25, **kwargs):
+       	super(CorrelationAttentivePooling, self).__init__()
+       	self.nheads = 4
+       	input_dim = 256
+       	self.sap_layer = AttentivePoolingModule(input_dim=input_dim) if self.nheads==1 \
+                                                           else AttentiveLSEPoolingModule(input_dim=input_dim, nheads=self.nheads)
+        self.drop_f = p_drop != 0
+        print(f'\nSelected channel wise dropout rate of: {p_drop}\n')
+        print(f'\nSelected number of attention heads: {self.nheads}\n')
+        if self.drop_f:
+            self.dropout = nn.Dropout2d(p=p_drop)
+
+    def forward(self, feature_BxTxH, features_len, **kwargs):
+        '''
+       	Arguments
+            feature_BxTxH - [BxTxH]   Acoustic feature with shape
+            features_len  - [B] of feature length                                                                                        \
+       	'''
+
+        if self.drop_f:
+            feature_BxHxT = torch.permute(feature_BxTxH, (0,2,1)) # [BxHxT]
+            feature_BxHxT = torch.unsqueeze(feature_BxHxT, dim=-1) # [BxHxTx1]
+            feature_BxHxT = self.dropout(feature_BxHxT)
+            feature_BxHxT = torch.squeeze(feature_BxHxT, dim=-1) # [BxHxT]
+            feature_BxTxH = torch.permute(feature_BxHxT, (0,2,1)) # [BxTxH]
+        
+        device = feature_BxTxH.device
+        len_masks = torch.lt(torch.arange(features_len.max()).unsqueeze(0).to(device), features_len.unsqueeze(1))
+        if self.nheads == 1:
+            att_logits_before_lse = []
+            sap_vec, att_w = self.sap_layer(feature_BxTxH, len_masks)
+        else:
+            sap_vec, att_w, att_logits_before_lse = self.sap_layer(feature_BxTxH, len_masks)
+
+        dshift = 1  # the diagonal to consider (0:includes diag, 1:from 1 over diag)
+
+        agg_vec_list = []
+        for i in range(len(feature_BxTxH)):
+            d = feature_BxTxH.shape[-1]
+            x = feature_BxTxH[i] - sap_vec[i]
+            corr = torch.einsum('jk,jl->kl', att_w[i]*x, x) # (H, H)
+            if dshift == 1:
+                s = torch.sqrt(torch.diagonal(corr)+1e-9)
+                corr = torch.div(corr,torch.outer(s, s))
+            corr = corr[torch.triu_indices(d, d, offset=dshift).unbind()]
+            agg_vec_list.append(corr)
+
+        return torch.stack(agg_vec_list), torch.ones(len(feature_BxTxH)).long() #, att_w, att_logits_before_lse # (B,feat_dim), (B,)
+
+
+class AttentiveLSEPoolingModule(nn.Module):
+    """
+    Implementation of LSE Attentive Pooling
+    """
+    def __init__(self, input_dim, nheads, activation='ReLU', **kwargs):
+        super(AttentiveLSEPoolingModule, self).__init__()
+        self.W_a = nn.Linear(input_dim, input_dim)
+        self.W = nn.Linear(input_dim, nheads)
+        self.act_fn = getattr(nn, activation)()
+        self.softmax = nn.functional.softmax
+
+    def forward(self, batch_rep, att_mask):
+       	"""
+       	input:                                                                                                                                                $
+       	batch_rep : size (B, T, H), B: batch size, T: sequence length, H: Hidden dimension                                                                    $
+       	attention_weight:                                                                                                                                     $
+       	att_w : size (B, T, 1)
+       	return:                                                                                                                                               $
+       	utter_rep: size (B, H)
+       	"""
+
+        att_logits = self.W(self.act_fn(self.W_a(batch_rep))).squeeze(-1)
+        att_logits_before_lse = att_logits
+        att_logits = torch.logsumexp(att_logits, dim=-1)
+        att_logits = att_mask + att_logits
+        att_w = self.softmax(att_logits, dim=-1).unsqueeze(-1)
+        utter_rep = torch.sum(batch_rep * att_w, dim=1)
+
+       	return utter_rep, att_w, att_logits_before_lse

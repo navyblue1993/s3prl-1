@@ -29,6 +29,8 @@ from .modules import (
     init_bert_params,
 )
 
+from pdb import set_trace
+
 logger = logging.getLogger(__name__)
 
 
@@ -403,6 +405,7 @@ class WavLM(nn.Module):
         feature = res["features"] if ret_conv else res["x"]
         if ret_layer_results:
             feature = (feature, res["layer_results"])
+        
         return feature, res["padding_mask"]
 
 

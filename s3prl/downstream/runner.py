@@ -8,6 +8,7 @@ import random
 import tempfile
 import importlib
 from pathlib import Path
+import pickle
 
 import torch
 import torchaudio
@@ -25,6 +26,8 @@ from s3prl.upstream.interfaces import Featurizer
 from s3prl.utility.helper import is_leader_process, get_model_state, show, defaultdict
 
 from huggingface_hub import HfApi, HfFolder, Repository
+
+from pdb import set_trace
 
 SAMPLE_RATE = 16000
 
@@ -94,6 +97,10 @@ class Runner():
         self.featurizer = self._get_featurizer()
         self.downstream = self._get_downstream()
         self.all_entries = [self.upstream, self.featurizer, self.downstream]
+        self.partial_finetune = self.config.get('partial_finetune')
+        if self.partial_finetune == None:
+            self.partial_finetune = False
+            print(f'partial_finetune={self.partial_finetune}')
 
 
     def _load_weight(self, model, name):
@@ -266,6 +273,16 @@ class Runner():
         records = defaultdict(list)
         epoch = self.init_ckpt.get('Epoch', 0)
         train_split = self.config['runner'].get("train_dataloader", "train")
+        # - insert test_split here wlchiu
+        test_split = self.config['runner'].get("test_dataloader", "test")
+        #set_trace()
+        if self.partial_finetune:
+            print('freeze the feature_extractor and post_extract_proj in WavLM')
+            for param in self.upstream.model.model.feature_extractor.parameters():
+                param.requires_grad = False
+            for param in self.upstream.model.model.post_extract_proj.parameters():
+                param.requires_grad = False
+                
         while pbar.n < pbar.total:
             try:
                 dataloader = self.downstream.model.get_dataloader(train_split, epoch=epoch)
@@ -276,7 +293,9 @@ class Runner():
                         dataloader.sampler.set_epoch(epoch)
                 else:
                     raise
-
+            
+            # **********
+            
             for batch_id, (wavs, *others) in enumerate(tqdm(dataloader, dynamic_ncols=True, desc='train', file=tqdm_file)):
                 # try/except block for forward/backward
                 try:
@@ -305,7 +324,6 @@ class Runner():
                     gradient_accumulate_steps = self.config['runner'].get('gradient_accumulate_steps')
                     (loss / gradient_accumulate_steps).backward()
                     del loss
-
                 except RuntimeError as e:
                     if 'CUDA out of memory' in str(e):
                         print(f'[Runner] - CUDA out of memory at step {global_step}')
@@ -398,8 +416,62 @@ class Runner():
                     for i, path in enumerate(save_paths):
                         tqdm.write(f'{i + 1}. {path}')
                         torch.save(all_states, path)
-
+                
+                # - run mcc loop
+                
                 pbar.update(1)
+            for split in self.config['runner']['eval_dataloaders']:
+                try:
+                    dataloader = self.downstream.model.get_dataloader(split, epoch=epoch)
+                except TypeError as e:
+                    if "unexpected keyword argument 'epoch'" in str(e):
+                        dataloader = self.downstream.model.get_dataloader(split)
+                        if hasattr(dataloader, "sampler") and isinstance(dataloader.sampler, DistributedSampler):
+                            dataloader.sampler.set_epoch(epoch)
+                    else:
+                        raise
+                for batch_id, (wavs, *others) in enumerate(tqdm(dataloader, dynamic_ncols=True, desc='eval', file=tqdm_file)):
+                    # try/except block for forward/backward
+                    try:
+                        if pbar.n >= pbar.total:
+                            break
+                        global_step = pbar.n + 1
+
+                        wavs = [torch.FloatTensor(wav).to(self.args.device) for wav in wavs]
+                        if self.upstream.trainable:
+                            features = self.upstream.model(wavs)
+                        else:
+                            with torch.no_grad():
+                                features = self.upstream.model(wavs)
+                        features = self.featurizer.model(wavs, features)
+
+                        if specaug:
+                            features, _ = specaug(features)
+
+                        loss = self.downstream.model(
+                            train_split,
+                            features, *others,
+                            records = records,
+                            is_train = False,
+                        )
+                        batch_ids.append(batch_id)
+
+                        gradient_accumulate_steps = self.config['runner'].get('gradient_accumulate_steps')
+                        (loss / gradient_accumulate_steps).backward()
+                        del loss
+                    except RuntimeError as e:
+                        if 'CUDA out of memory' in str(e):
+                            print(f'[Runner] - CUDA out of memory at step {global_step}')
+                            if is_initialized():
+                                raise
+                            with torch.cuda.device(self.args.device):
+                                torch.cuda.empty_cache()
+                            optimizer.zero_grad()
+                            continue
+                        else:
+                            raise
+                
+            
             epoch += 1
 
         pbar.close()
@@ -441,15 +513,21 @@ class Runner():
         evaluate_steps = round(len(dataloader) * evaluate_ratio)
 
         batch_ids = []
+        all_features = None
         records = defaultdict(list)
         for batch_id, (wavs, *others) in enumerate(tqdm(dataloader, dynamic_ncols=True, desc=split, total=evaluate_steps)):
             if batch_id > evaluate_steps:
                 break
-
             wavs = [torch.FloatTensor(wav).to(self.args.device) for wav in wavs]
             with torch.no_grad():
                 features = self.upstream.model(wavs)
                 features = self.featurizer.model(wavs, features)
+                
+                # if batch_id == 0:
+                #     all_features = [feat.cpu().numpy() for feat in features]
+                # else:
+                #     all_features += [feat.cpu().numpy() for feat in features]
+                
                 self.downstream.model(
                     split,
                     features, *others,
@@ -457,6 +535,14 @@ class Runner():
                     batch_id = batch_id,
                 )
                 batch_ids.append(batch_id)
+            
+        # set_trace()
+        # print(len(all_features))
+        # out_feat_path = "result/downstream/exp1/embedding_5_train.pkl"
+        # # out_feat_path = "result/downstream/exp1/embedding_5_test.pkl"
+        # with open(out_feat_path, 'wb') as f: 
+        #     pickle.dump(all_features, f)
+        # set_trace()
 
         save_names = self.downstream.model.log_records(
             split,

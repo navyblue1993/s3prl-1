@@ -24,14 +24,16 @@ optimizer:
 
 downstream_expert:
   datarc:
-    root: /groups/public/benchmark/IEMOCAP
+    root: /ocean/projects/tra220029p/zjia1/IEMOCAP_full_release
+    # root: /groups/public/benchmark/IEMOCAP
     meta_data: ./downstream/emotion/meta_data
-    test_fold: fold1
+    test_fold: fold5
     pre_load: True
     train_batch_size: 4
     eval_batch_size: 4
     num_workers: 6
     valid_ratio: 0.2
+    temperature: 2.0
 
   modelrc:
     projector_dim: 256

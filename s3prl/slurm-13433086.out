@@ -1,0 +1,24 @@
+[Override] - config.partial_finetune = true
+INFO:s3prl.util.download:Requesting URL: https://huggingface.co/s3prl/converted_ckpts/resolve/main/wavlm_base_plus.pt
+INFO:s3prl.util.download:Using URL's local file: /jet/home/tjin1/.cache/s3prl/download/72cb34edf8a3724c720467cf40b77ad20b1b714b5f694e9db57f521467f9006b.wavlm_base_plus.pt
+INFO:s3prl.upstream.wavlm.WavLM:WavLM Config: {'extractor_mode': 'default', 'encoder_layers': 12, 'encoder_embed_dim': 768, 'encoder_ffn_embed_dim': 3072, 'encoder_attention_heads': 12, 'activation_fn': 'gelu', 'layer_norm_first': False, 'conv_feature_layers': '[(512,10,5)] + [(512,3,2)] * 4 + [(512,2,2)] * 2', 'conv_bias': False, 'feature_grad_mult': 0.1, 'normalize': False, 'dropout': 0.1, 'attention_dropout': 0.1, 'activation_dropout': 0.0, 'encoder_layerdrop': 0.05, 'dropout_input': 0.1, 'dropout_features': 0.1, 'mask_length': 10, 'mask_prob': 0.8, 'mask_selection': 'static', 'mask_other': 0.0, 'no_mask_overlap': False, 'mask_min_space': 1, 'mask_channel_length': 10, 'mask_channel_prob': 0.0, 'mask_channel_selection': 'static', 'mask_channel_other': 0.0, 'no_mask_channel_overlap': False, 'mask_channel_min_space': 1, 'conv_pos': 128, 'conv_pos_groups': 16, 'relative_position_embedding': True, 'num_buckets': 320, 'max_distance': 800, 'gru_rel_pos': True}
+[Featurizer] - The selected feature hidden_states's downsample rate is 320
+[Runner] - Start a new experiment
+temperature is default value 3.0
+transfer loss ratio=0.1
+[Expert] - using the testing fold: "fold1". Ps. Use -o config.downstream_expert.datarc.test_fold=fold2 to change test_fold in config.
+[Expert] - Training path: ./downstream/emotion/meta_data/Session1/train_meta_data.json
+[Expert] - Testing path: ./downstream/emotion/meta_data/Session1/test_meta_data.json
+Traceback (most recent call last):
+  File "/ocean/projects/tra220029p/tjin1/s3prl/s3prl/run_downstream.py", line 221, in <module>
+    main()
+  File "/ocean/projects/tra220029p/tjin1/s3prl/s3prl/run_downstream.py", line 217, in main
+    eval(f'runner.{args.mode}')()
+  File "/ocean/projects/tra220029p/tjin1/s3prl/s3prl/downstream/runner.py", line 252, in train
+    scheduler = self._get_scheduler(optimizer)
+  File "/ocean/projects/tra220029p/tjin1/s3prl/s3prl/downstream/runner.py", line 220, in _get_scheduler
+    scheduler = get_scheduler(
+  File "/ocean/projects/tra220029p/tjin1/s3prl/s3prl/schedulers.py", line 15, in get_scheduler
+    scheduler = eval(f'get_{scheduler_name}')(
+  File "<string>", line 1, in <module>
+NameError: name 'get_swa_utils' is not defined
