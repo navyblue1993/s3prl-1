@@ -23,6 +23,10 @@ We support the following environments. The test cases are ran with **[tox](./tox
 | python | `3.7`, `3.8`, `3.9`, `3.10` |
 | pytorch | `1.8.1`, `1.9.1`, `1.10.2`, `1.11.0`, `1.12.1` |
 
+## About this branch
+
+This is the implementation of "Minimum Class Confusion on fine-tuned WavLM in Audio-only Speech Emotion Recognition".
+
 ## What's New
 
 * *Mar 2022*: Introduce [**SUPERB-SG**](https://arxiv.org/abs/2203.06849), see [Speech Translation](./s3prl/downstream/speech_translation), [Out-of-domain ASR](./s3prl/downstream/ctc/), [Voice Conversion](./s3prl/downstream/a2o-vc-vcc2020/), [Speech Separation](./s3prl/downstream/separation_stft/) and [Speech Enhancement](./s3prl/downstream/enhancement_stft/) for more info.
